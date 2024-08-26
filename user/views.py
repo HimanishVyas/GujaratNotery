@@ -21,10 +21,12 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet, ModelViewSet
+from django.shortcuts import get_object_or_404
 
 # Serializer Import
 from user.serializer import (
-    UserSerializer
+    UserSerializer,
+    UserCreateSerializer
 )
 
 from user.auth import (
@@ -38,8 +40,6 @@ from user.auth import (
 # Ganrate Token
 
 def get_tokens_for_user(user):
-    # refresh = RefreshToken.for_user(user)
-    # access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
     id = decode_refresh_token(refresh_token)
     refresh_access_token = create_access_token(id)
@@ -50,6 +50,46 @@ def get_tokens_for_user(user):
     }
 
 
+class CreateUserApi(ViewSet):
+    def create(self, request):
+        data = request.data
+        # checking if email and username exsiting or not 
+        if User.objects.filter(email=data["email"]).exists():
+            return Response({"error": "Email already exists", "status": status.HTTP_400_BAD_REQUEST})
+        elif User.objects.filter(username=data["username"]).exists():
+            return Response({"error": "Username already exists", "status": status.HTTP_400_BAD_REQUEST})
+        
+        # country = Country.objects.filter(country_name=data["country"])
+        # if country == None:
+        #     country = Country.objects.create(country_name=data["country"]) # creating non exsiting country
+
+        # state = State.objects.filter(state=data["state"], country_fk=country)
+        # print(state, "============")
+        # if state == None:
+        #     print(data["state"])
+        #     state = State.objects.create(state=data["state"], country_fk=country[0]) # creating non exsiting state
+            
+        # district = District.objects.get(state_fk=state[0], district=data["district"])        
+        # if district == None:
+        #     district = District.objects.create(state_fk=state, district=data["district"]) # creating non exsiting state
+        
+        country = Country.objects.get(country_name=data["country"])
+        state = State.objects.get(country_fk=country, state=data["state"])
+        district = District.objects.get(district=data["district"], state_fk=state)
+        data['country'] = country.id
+        data['state'] = state.id
+        data['district'] = district.id
+        data['user_reg_status'] = 'user_reg_status'
+        user_serializer = UserCreateSerializer(data=data)
+        user_serializer.is_valid(raise_exception=True)
+        user = user_serializer.save()
+        token = get_tokens_for_user(user)
+        response = user_serializer.data
+        response["token"] = token
+        response["status"] = status.HTTP_201_CREATED
+        response["message"] = "User Created successfully"
+        return Response(response, status=status.HTTP_200_OK)
+    
 class LoginApi(ViewSet):
     authentication_classes = []
 
@@ -88,19 +128,37 @@ class UserListing(ModelViewSet):
     authentication_classes = []
     serializer_class = UserSerializer
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['username', 'business_name', 'first_name', 'last_name', 'user_role', 'country__country_name',
+    filterset_fields = ['username',
+                        'business_name',
+                        'first_name',
+                        'last_name',
+                        'user_role',
+                        'country__country_name',
                         'state__state',
-                        'district__district']
+                        'district__district'
+                        ]
 
     def get_queryset(self):
         return User.objects.all()  # Return the queryset here
 
-    # def list(self, request, *args, **kwargs):
-    #     queryset = User.objects.all()
-    #     serializer = UserSerializer(queryset, many=True)
-    #     return Response(serializer.data)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        response = {
+            "data": serializer.data,
+            "count": queryset.count(),
+            "status": status.HTTP_200_OK,
+        }
+        return Response(response, status=status.HTTP_200_OK)
+
     #
-    # def retrieve(self, request, pk=None):
-    #     queryset = User.objects.get(id=pk)
-    #     serializer = UserSerializer(queryset)
-    #     return Response(serializer.data)
+    def retrieve(self, request, pk=None):
+        queryset = self.get_queryset()
+        user = get_object_or_404(queryset, pk=pk)
+        serializer = self.get_serializer(user)
+        response = {
+            "data": serializer.data,
+            "status": status.HTTP_200_OK,
+        }
+        return Response(response, status=status.HTTP_200_OK)
+
